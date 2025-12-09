@@ -30,18 +30,6 @@ Action Input: {"a": 1, "b": 1}
     assert action_input == '{"a": 1, "b": 1}'
 
 
-def test_extract_tool_use_no_thought() -> None:
-    mock_input_text = """\
-I need to use a tool to help me answer the question.
-Action: add
-Action Input: {"a": 1, "b": 1}
-"""
-    thought, action, action_input = extract_tool_use(mock_input_text)
-    assert thought == "I need to use a tool to help me answer the question."
-    assert action == "add"
-    assert action_input == '{"a": 1, "b": 1}'
-
-
 def test_extract_tool_use_multiline() -> None:
     mock_input_text = """\
 Thought: I need to use a tool to help me answer the question.
@@ -163,7 +151,8 @@ Answer: 2
 """
 
     expected_thought = (
-        "I have enough information to answer the question without using any more tools."
+        "I have enough information to answer the question "
+        "without using any more tools."
     )
     thought, answer = extract_final_response(mock_input_text)
     assert thought == expected_thought
@@ -179,7 +168,8 @@ This is the second line.
 """
 
     expected_thought = (
-        "I have enough information to answer the question without using any more tools."
+        "I have enough information to answer the question "
+        "without using any more tools."
     )
     thought, answer = extract_final_response(mock_input_text)
     assert thought == expected_thought
@@ -188,21 +178,4 @@ This is the second line.
         == """Here is the answer:
 
 This is the second line."""
-    )
-
-
-def test_react_output_parser_handles_action_in_answer() -> None:
-    mock_input_text = """\
-Thought: I have enough information to answer the question without using any more tools.
-Answer: Answer contains Legislative Action: here is the legislative action content.
-"""
-
-    expected_thought = (
-        "I have enough information to answer the question without using any more tools."
-    )
-    thought, answer = extract_final_response(mock_input_text)
-    assert thought == expected_thought
-    assert (
-        answer
-        == "Answer contains Legislative Action: here is the legislative action content."
     )

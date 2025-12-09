@@ -52,6 +52,7 @@ def resolve_llm(
                 "If you intended to use OpenAI, please check your OPENAI_API_KEY.\n"
                 "Original error:\n"
                 f"{e!s}"
+                "\nTo disable the LLM entirely, set llm=None."
                 "\n******"
             )
 
@@ -100,9 +101,7 @@ def resolve_llm(
 
     assert isinstance(llm, LLM)
 
-    llm.callback_manager = (
-        callback_manager or llm.callback_manager or Settings.callback_manager
-    )
+    llm.callback_manager = callback_manager or Settings.callback_manager
 
     return llm
 

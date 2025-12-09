@@ -11,17 +11,36 @@ from llama_index.core.agent.react.types import (
 from llama_index.core.output_parsers.utils import extract_json_str
 from llama_index.core.types import BaseOutputParser
 
+COULD_NOT_PARSE_TXT = "Could not parse output:"
+EXPECTED_OUTPUT_INSTRUCTIONS = """\
+We expect the output to be in one of the following formats:
+1. If the agent need to use a tool to answer the question:
+    ```
+    Thought: <thought>
+    Action: <action>
+    Action Input: <action_input>
+    ```
+NOTE: Action Input should be a dictionary with the key as the function parameter name \
+and the value as the argument to pass to the function parameter. 
+2. If the agent can answer the question without any tools:
+    ```
+    Thought: <thought>
+    Answer: <answer>
+    ```"""
+
 
 def extract_tool_use(input_text: str) -> Tuple[str, str, str]:
-    pattern = r"(?:\s*Thought: (.*?)|(.+))\n+Action: ([^\n\(\) ]+).*?\n+Action Input: .*?(\{.*\})"
+    pattern = (
+        r"\s*Thought: (.*?)\n+Action: ([^\n\(\) ]+).*?\n+Action Input: .*?(\{.*\})"
+    )
 
     match = re.search(pattern, input_text, re.DOTALL)
     if not match:
         raise ValueError(f"Could not extract tool use from input text: {input_text}")
 
-    thought = (match.group(1) or match.group(2)).strip()
-    action = match.group(3).strip()
-    action_input = match.group(4).strip()
+    thought = match.group(1).strip()
+    action = match.group(2).strip()
+    action_input = match.group(3).strip()
     return thought, action, action_input
 
 
@@ -70,8 +89,7 @@ class ReActOutputParser(BaseOutputParser):
     """ReAct Output parser."""
 
     def parse(self, output: str, is_streaming: bool = False) -> BaseReasoningStep:
-        """
-        Parse output from ReAct agent.
+        """Parse output from ReAct agent.
 
         We expect the output to be in one of the following formats:
         1. If the agent need to use a tool to answer the question:
@@ -86,16 +104,9 @@ class ReActOutputParser(BaseOutputParser):
             Answer: <answer>
             ```
         """
-        # Use regex to find properly formatted keywords at line boundaries
-        thought_match = re.search(r"Thought:", output, re.MULTILINE)
-        action_match = re.search(r"Action:", output, re.MULTILINE)
-        answer_match = re.search(r"Answer:", output, re.MULTILINE)
-
-        thought_idx = thought_match.start() if thought_match else None
-        action_idx = action_match.start() if action_match else None
-        answer_idx = answer_match.start() if answer_match else None
-
-        if thought_idx is None and action_idx is None and answer_idx is None:
+        if "Thought:" not in output:
+            if "Action:" in output or "Action Input:" in output:
+                raise ValueError(f"{COULD_NOT_PARSE_TXT} {output}")
             # NOTE: handle the case where the agent directly outputs the answer
             # instead of following the thought-answer format
             return ResponseReasoningStep(
@@ -105,22 +116,16 @@ class ReActOutputParser(BaseOutputParser):
             )
 
         # An "Action" should take priority over an "Answer"
-        if (
-            action_idx is not None
-            and answer_idx is not None
-            and action_idx < answer_idx
-        ):
-            return parse_action_reasoning_step(output)
-        elif action_idx is not None and answer_idx is None:
+        if "Action:" in output:
             return parse_action_reasoning_step(output)
 
-        if answer_idx is not None:
+        if "Answer:" in output:
             thought, answer = extract_final_response(output)
             return ResponseReasoningStep(
                 thought=thought, response=answer, is_streaming=is_streaming
             )
 
-        raise ValueError(f"Could not parse output: {output}")
+        raise ValueError(f"{COULD_NOT_PARSE_TXT} {output}")
 
     def format(self, output: str) -> str:
         """Format a query with structured output formatting instructions."""

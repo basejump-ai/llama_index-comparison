@@ -4,6 +4,7 @@ import asyncio
 import base64
 import os
 import random
+import requests
 import sys
 import time
 import traceback
@@ -16,7 +17,6 @@ from io import BytesIO
 from itertools import islice
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncGenerator,
     Callable,
@@ -30,11 +30,8 @@ from typing import (
     Type,
     Union,
     runtime_checkable,
+    TYPE_CHECKING,
 )
-
-import platformdirs
-import requests
-from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from nltk.tokenize import PunktSentenceTokenizer
@@ -52,15 +49,16 @@ class GlobalsHelper:
         from nltk.data import path as nltk_path
 
         # Set up NLTK data directory
-        if "NLTK_DATA" in os.environ:
-            self._nltk_data_dir = str(Path(os.environ["NLTK_DATA"]))
-        else:
-            path = Path(os.path.dirname(os.path.abspath(__file__)))
-            self._nltk_data_dir = str(path / "_static/nltk_cache")
+        self._nltk_data_dir = os.environ.get(
+            "NLTK_DATA",
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "_static/nltk_cache",
+            ),
+        )
 
         # Ensure the directory exists
-        if not os.path.exists(self._nltk_data_dir):
-            os.makedirs(self._nltk_data_dir, exist_ok=True)
+        os.makedirs(self._nltk_data_dir, exist_ok=True)
 
         # Add to NLTK path if not already present
         if self._nltk_data_dir not in nltk_path:
@@ -71,8 +69,8 @@ class GlobalsHelper:
 
     def _download_nltk_data(self) -> None:
         """Download NLTK data packages in the background."""
-        from nltk import download
         from nltk.data import find as nltk_find
+        from nltk import download
 
         try:
             # Download stopwords
@@ -380,9 +378,7 @@ def concat_dirs(dirname: str, basename: str) -> str:
     return os.path.join(dirname, basename)
 
 
-def get_tqdm_iterable(
-    items: Iterable, show_progress: bool, desc: str, total: Optional[int] = None
-) -> Iterable:
+def get_tqdm_iterable(items: Iterable, show_progress: bool, desc: str) -> Iterable:
     """
     Optionally get a tqdm iterable. Ensures tqdm.auto is used.
     """
@@ -391,7 +387,7 @@ def get_tqdm_iterable(
         try:
             from tqdm.auto import tqdm
 
-            return tqdm(items, desc=desc, total=total)
+            return tqdm(items, desc=desc)
         except ImportError:
             pass
     return _iterator
@@ -428,12 +424,26 @@ def get_cache_dir() -> str:
     # User override
     if "LLAMA_INDEX_CACHE_DIR" in os.environ:
         path = Path(os.environ["LLAMA_INDEX_CACHE_DIR"])
+
+    # Linux, Unix, AIX, etc.
+    elif os.name == "posix" and sys.platform != "darwin":
+        path = Path("/tmp/llama_index")
+
+    # Mac OS
+    elif sys.platform == "darwin":
+        path = Path(os.path.expanduser("~"), "Library/Caches/llama_index")
+
+    # Windows (hopefully)
     else:
-        path = Path(platformdirs.user_cache_dir("llama_index"))
+        local = os.environ.get("LOCALAPPDATA", None) or os.path.expanduser(
+            "~\\AppData\\Local"
+        )
+        path = Path(local, "llama_index")
 
-    # Pass exist_ok and call makedirs directly, so we avoid TOCTOU issues
-    path.mkdir(parents=True, exist_ok=True)
-
+    if not os.path.exists(path):
+        os.makedirs(
+            path, exist_ok=True
+        )  # prevents https://github.com/jerryjliu/llama_index/issues/7362
     return str(path)
 
 
@@ -498,7 +508,10 @@ _ANSI_COLORS = {
     "magenta": "35",
     "cyan": "36",
     "pink": "38;5;200",
+    "orange": "38;5;208",
 }
+
+_OTHER_RGB_COLORS = {"orange": "48;2;255;165;0"}
 
 
 def get_color_mapping(
@@ -526,7 +539,7 @@ def get_color_mapping(
     return {item: colors[i % len(colors)] for i, item in enumerate(items)}
 
 
-def _get_colored_text(text: str, color: str) -> str:
+def _get_colored_text(text: str, color: str, bold_and_italics=True) -> str:
     """
     Get the colored version of the input text.
 
@@ -538,17 +551,28 @@ def _get_colored_text(text: str, color: str) -> str:
         str: Colored version of the input text.
 
     """
-    all_colors = {**_LLAMA_INDEX_COLORS, **_ANSI_COLORS}
+    all_colors = {**_LLAMA_INDEX_COLORS, **_ANSI_COLORS, **_OTHER_RGB_COLORS}
 
     if color not in all_colors:
-        return f"\033[1;3m{text}\033[0m"  # just bolded and italicized
+        if bold_and_italics:
+            return f"\033[1;3m{text}\033[0m"  # just bolded and italicized
+        else:
+            return text
 
     color = all_colors[color]
 
-    return f"\033[1;3;{color}m{text}\033[0m"
+    if bold_and_italics:
+        return f"\033[1;3;{color}m{text}\033[0m"
+    else:
+        return f"\033[{color}m{text}\033[0m"
 
 
-def print_text(text: str, color: Optional[str] = None, end: str = "") -> None:
+def print_text(
+    text: str,
+    color: Optional[str] = None,
+    end: str = "",
+    response_hook: Optional[Callable] = None,
+) -> None:
     """
     Print the text with the specified color.
 
@@ -563,9 +587,35 @@ def print_text(text: str, color: Optional[str] = None, end: str = "") -> None:
         None
 
     """
+    if response_hook:
+        response_hook(text)
     text_to_print = _get_colored_text(text, color) if color is not None else text
     print(text_to_print, end=end)
 
+
+async def aprint_text(
+    text: str,
+    color: Optional[str] = None,
+    end: str = "",
+    response_hook: Optional[Callable] = None,
+) -> None:
+    """
+    Print the text with the specified color.
+
+    Args:
+        text (str): Text to be printed.
+        color (str, optional): Color to be applied to the text. Supported colors are:
+            llama_pink, llama_blue, llama_turquoise, llama_lavender,
+            red, green, yellow, blue, magenta, cyan, pink.
+        end (str, optional): String appended after the last character of the text.
+
+    Returns:
+        None
+    """
+    if response_hook:
+        await response_hook(text)
+    text_to_print = _get_colored_text(text, color) if color is not None else text
+    print(text_to_print, end=end)
 
 def infer_torch_device() -> str:
     """Infer the input to torch.device."""
@@ -660,41 +710,10 @@ def resolve_binary(
         return BytesIO(data)
 
     elif url is not None:
-        parsed_url = urlparse(url)
-        if parsed_url.scheme == "data":
-            # Parse data URL: data:[<mediatype>][;base64],<data>
-            # The path contains everything after "data:"
-            data_part = parsed_url.path
-
-            # Split on the first comma to separate metadata from data
-            if "," not in data_part:
-                raise ValueError("Invalid data URL format: missing comma separator")
-
-            metadata, url_data = data_part.split(",", 1)
-            is_base64_encoded = metadata.endswith(";base64")
-
-            if is_base64_encoded:
-                # Data is base64 encoded in the URL
-                decoded_data = base64.b64decode(url_data)
-                if as_base64:
-                    # Return as base64 bytes
-                    return BytesIO(base64.b64encode(decoded_data))
-                else:
-                    # Return decoded binary data
-                    return BytesIO(decoded_data)
-            else:
-                # Data is not base64 encoded in the URL (URL-encoded text)
-                if as_base64:
-                    # Encode the text data as base64
-                    return BytesIO(base64.b64encode(url_data.encode("utf-8")))
-                else:
-                    # Return as text bytes
-                    return BytesIO(url_data.encode("utf-8"))
-
         headers = {
             "User-Agent": "LlamaIndex/0.0 (https://llamaindex.ai; info@llamaindex.ai) llama-index-core/0.0"
         }
-        response = requests.get(url, headers=headers, timeout=(60, 60))
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         if as_base64:
             return BytesIO(base64.b64encode(response.content))

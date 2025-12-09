@@ -32,7 +32,6 @@ import requests
 from dataclasses_json import DataClassJsonMixin
 from deprecated import deprecated
 from typing_extensions import Self
-from PIL import Image
 
 from llama_index.core.bridge.pydantic import (
     AnyUrl,
@@ -852,7 +851,7 @@ class ImageNode(TextNode):
             # load image from URL
             import requests
 
-            response = requests.get(self.image_url, timeout=(60, 60))
+            response = requests.get(self.image_url)
             return BytesIO(response.content)
         else:
             raise ValueError("No image found in node.")
@@ -1004,7 +1003,6 @@ class NodeWithScore(BaseComponent):
 
     def get_embedding(self) -> List[float]:
         return self.node.get_embedding()
-
 
 # Document Classes for Readers
 
@@ -1221,27 +1219,6 @@ class Document(Node):
         )
 
 
-def is_image_pil(file_path: str) -> bool:
-    try:
-        with Image.open(file_path) as img:
-            img.verify()  # Verify it's a valid image
-        return True
-    except (IOError, SyntaxError):
-        return False
-
-
-def is_image_url_pil(url: str) -> bool:
-    try:
-        response = requests.get(url, stream=True, timeout=(60, 60))
-        response.raise_for_status()  # Raise an exception for bad status codes
-        # Open image from the response content
-        img = Image.open(BytesIO(response.content))
-        img.verify()
-        return True
-    except (requests.RequestException, IOError, SyntaxError):
-        return False
-
-
 class ImageDocument(Document):
     """Backward compatible wrapper around Document containing an image."""
 
@@ -1257,14 +1234,10 @@ class ImageDocument(Document):
                 data=image, mimetype=image_mimetype
             )
         elif image_path:
-            if not is_image_pil(image_path):
-                raise ValueError("The specified file path is not an accessible image")
             kwargs["image_resource"] = MediaResource(
                 path=image_path, mimetype=image_mimetype
             )
         elif image_url:
-            if not is_image_url_pil(image_url):
-                raise ValueError("The specified URL is not an accessible image")
             kwargs["image_resource"] = MediaResource(
                 url=image_url, mimetype=image_mimetype
             )
@@ -1351,7 +1324,7 @@ class ImageDocument(Document):
             return BytesIO(img_bytes)
         elif self.image_resource.url is not None:
             # load image from URL
-            response = requests.get(str(self.image_resource.url), timeout=(60, 60))
+            response = requests.get(str(self.image_resource.url))
             img_bytes = response.content
             if as_base64:
                 return BytesIO(base64.b64encode(img_bytes))

@@ -1,5 +1,3 @@
-import json
-
 import click
 from rich.table import Table
 
@@ -13,15 +11,8 @@ from llama_dev.utils import find_all_packages, is_llama_index_package, load_pypr
     is_flag=True,
     help="Get info for all the packages in the monorepo",
 )
-@click.option(
-    "--json",
-    "use_json",
-    is_flag=True,
-    default=False,
-    help="Use JSON as the output format",
-)
 @click.pass_obj
-def info(obj: dict, all: bool, use_json: bool, package_names: tuple):
+def info(obj: dict, all: bool, package_names: tuple):
     if not all and not package_names:
         raise click.UsageError("Either specify a package name or use the --all flag")
 
@@ -37,25 +28,16 @@ def info(obj: dict, all: bool, use_json: bool, package_names: tuple):
                 )
             packages.add(package_path)
 
-    if use_json:
-        data = {}
-        for package in packages:
-            package_data = load_pyproject(package)
-            data["name"] = package_data["project"]["name"]
-            data["version"] = package_data["project"]["version"]
-            data["path"] = str(package)
-        obj["console"].print(json.dumps(data))
-    else:
-        table = Table(box=None)
-        table.add_column("Name")
-        table.add_column("Version")
-        table.add_column("Path")
+    table = Table(box=None)
+    table.add_column("Name")
+    table.add_column("Version")
+    table.add_column("Path")
 
-        for package in packages:
-            package_data = load_pyproject(package)
-            table.add_row(
-                package_data["project"]["name"],
-                package_data["project"]["version"],
-                str(package),
-            )
-        obj["console"].print(table)
+    for package in packages:
+        package_data = load_pyproject(package)
+        table.add_row(
+            package_data["project"]["name"],
+            package_data["project"]["version"],
+            str(package),
+        )
+    obj["console"].print(table)

@@ -31,6 +31,7 @@ class TokenCountingEvent:
     prompt_token_count: int
     total_token_count: int = 0
     event_id: str = ""
+    model: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.total_token_count = self.prompt_token_count + self.completion_token_count
@@ -44,7 +45,7 @@ def get_tokens_from_response(
     if not isinstance(raw_response, dict):
         raw_response = dict(raw_response or {})
 
-    usage = raw_response.get("usage", raw_response.get("usage_metadata", {}))
+    usage = raw_response.get("usage", {})
     if usage is None:
         usage = response.additional_kwargs
 
@@ -54,12 +55,8 @@ def get_tokens_from_response(
     if not isinstance(usage, dict):
         usage = usage.model_dump()
 
-    possible_input_keys = ("prompt_tokens", "input_tokens", "prompt_token_count")
-    possible_output_keys = (
-        "completion_tokens",
-        "output_tokens",
-        "candidates_token_count",
-    )
+    possible_input_keys = ("prompt_tokens", "input_tokens")
+    possible_output_keys = ("completion_tokens", "output_tokens")
 
     prompt_tokens = 0
     for input_key in possible_input_keys:
@@ -110,6 +107,10 @@ def get_llm_token_counts(
         messages_str = "\n".join([str(x) for x in messages])
 
         response = payload.get(EventPayload.RESPONSE)
+        if isinstance(response.raw, dict):
+            model = response.raw.get("model")
+        else:
+            model = response.raw.model
         response_str = str(response)
 
         if response:
@@ -129,6 +130,7 @@ def get_llm_token_counts(
             prompt_token_count=prompt_tokens,
             completion=response_str,
             completion_token_count=completion_tokens,
+            model=model,
         )
     else:
         return TokenCountingEvent(
@@ -228,6 +230,7 @@ class TokenCountingHandler(PythonicallyPrintingBaseHandler):
             and payload is not None
         ):
             total_chunk_tokens = 0
+            serialized = payload.get(EventPayload.SERIALIZED)
             for chunk in payload.get(EventPayload.CHUNKS, []):
                 self.embedding_token_counts.append(
                     TokenCountingEvent(
@@ -236,6 +239,7 @@ class TokenCountingHandler(PythonicallyPrintingBaseHandler):
                         prompt_token_count=self._token_counter.get_string_tokens(chunk),
                         completion="",
                         completion_token_count=0,
+                        model=serialized["model_name"] if serialized else None,
                     )
                 )
                 total_chunk_tokens += self.embedding_token_counts[-1].total_token_count

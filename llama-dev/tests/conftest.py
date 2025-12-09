@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,9 +20,3 @@ def mock_current_version(monkeypatch):
         monkeypatch.setattr(sys, "version_info", mock_version)
 
     return _set_version
-
-
-@pytest.fixture
-def mock_rich_console():
-    """Fixture to mock the rich console."""
-    return MagicMock()

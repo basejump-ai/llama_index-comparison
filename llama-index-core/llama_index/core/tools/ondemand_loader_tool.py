@@ -5,6 +5,7 @@ Tool that wraps any data loader, and is able to load data on-demand.
 
 """
 
+
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from llama_index.core.bridge.pydantic import BaseModel
@@ -148,7 +149,7 @@ class OnDemandLoaderTool(AsyncBaseTool):
         response = query_engine.query(query_str)
         return ToolOutput(
             content=str(response),
-            tool_name=self.metadata.get_name(),
+            tool_name=self.metadata.name,
             raw_input={"query": query_str},
             raw_output=response,
         )
@@ -163,7 +164,7 @@ class OnDemandLoaderTool(AsyncBaseTool):
         response = await query_engine.aquery(query_str)
         return ToolOutput(
             content=str(response),
-            tool_name=self.metadata.get_name(),
+            tool_name=self.metadata.name,
             raw_input={"query": query_str},
             raw_output=response,
         )

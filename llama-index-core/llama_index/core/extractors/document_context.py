@@ -13,7 +13,6 @@ from typing import (
     Sequence,
     Set,
     Union,
-    cast,
 )
 from typing_extensions import TypeGuard
 
@@ -27,10 +26,9 @@ from llama_index.core.llms import (
     ImageBlock,
     LLM,
     TextBlock,
-    DocumentBlock,
 )
 from llama_index.core.schema import BaseNode, Node, TextNode
-from llama_index.core.storage.docstore.types import BaseDocumentStore
+from llama_index.core.storage.docstore.simple_docstore import DocumentStore
 
 
 def is_text_node(node: BaseNode) -> TypeGuard[Union[Node, TextNode]]:
@@ -64,7 +62,7 @@ class DocumentContextExtractor(BaseExtractor):
 
     Attributes:
         llm (LLM): Language model instance for generating context
-        docstore (BaseDocumentStore): Storage for parent documents
+        docstore (DocumentStore): Storage for parent documents
         key (str): Metadata key for storing extracted context
         prompt (str): Prompt template for context generation
         doc_ids (Set[str]): Set of processed document IDs
@@ -87,7 +85,7 @@ class DocumentContextExtractor(BaseExtractor):
 
     # Pydantic fields
     llm: LLM
-    docstore: BaseDocumentStore
+    docstore: DocumentStore
     key: str
     prompt: str
     doc_ids: Set[str]
@@ -103,7 +101,7 @@ class DocumentContextExtractor(BaseExtractor):
 
     def __init__(
         self,
-        docstore: BaseDocumentStore,
+        docstore: DocumentStore,
         llm: Optional[LLM] = None,
         max_context_length: int = 1000,
         key: str = DEFAULT_KEY,
@@ -207,12 +205,9 @@ class DocumentContextExtractor(BaseExtractor):
                     messages, max_tokens=self.max_output_tokens, extra_headers=headers
                 )
 
-                first_block: Union[TextBlock, ImageBlock, AudioBlock, DocumentBlock] = (
-                    cast(
-                        Union[TextBlock, ImageBlock, AudioBlock, DocumentBlock],
-                        response.message.blocks[0],
-                    )
-                )
+                first_block: Union[
+                    TextBlock, ImageBlock, AudioBlock
+                ] = response.message.blocks[0]
                 if isinstance(first_block, TextBlock):
                     metadata[key] = first_block.text
                 else:

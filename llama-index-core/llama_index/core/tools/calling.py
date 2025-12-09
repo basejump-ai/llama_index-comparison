@@ -9,55 +9,53 @@ if TYPE_CHECKING:
 
 def call_tool(tool: BaseTool, arguments: dict) -> ToolOutput:
     """Call a tool with arguments."""
-    try:
-        if (
-            len(tool.metadata.get_parameters_dict()["properties"]) == 1
-            and len(arguments) == 1
-        ):
-            try:
-                single_arg = arguments[next(iter(arguments))]
-                return tool(single_arg)
-            except Exception:
-                # some tools will REQUIRE kwargs, so try it
-                return tool(**arguments)
-        else:
+    # try:
+    if (
+        len(tool.metadata.get_parameters_dict()["properties"]) == 1
+        and len(arguments) == 1
+    ):
+        try:
+            single_arg = arguments[next(iter(arguments))]
+            return tool(single_arg)
+        except Exception:
+            # some tools will REQUIRE kwargs, so try it
             return tool(**arguments)
-    except Exception as e:
-        return ToolOutput(
-            content="Encountered error: " + str(e),
-            tool_name=tool.metadata.get_name(),
-            raw_input=arguments,
-            raw_output=str(e),
-            is_error=True,
-            exception=e,
-        )
+    else:
+        return tool(**arguments)
+    # except Exception as e:
+    #     return ToolOutput(
+    #         content="Encountered error: " + str(e),
+    #         tool_name=tool.metadata.name,
+    #         raw_input=arguments,
+    #         raw_output=str(e),
+    #         is_error=True,
+    #     )
 
 
 async def acall_tool(tool: BaseTool, arguments: dict) -> ToolOutput:
     """Call a tool with arguments asynchronously."""
     async_tool = adapt_to_async_tool(tool)
-    try:
-        if (
-            len(tool.metadata.get_parameters_dict()["properties"]) == 1
-            and len(arguments) == 1
-        ):
-            try:
-                single_arg = arguments[next(iter(arguments))]
-                return await async_tool.acall(single_arg)
-            except Exception:
-                # some tools will REQUIRE kwargs, so try it
-                return await async_tool.acall(**arguments)
-        else:
+    # try:
+    if (
+        len(tool.metadata.get_parameters_dict()["properties"]) == 1
+        and len(arguments) == 1
+    ):
+        try:
+            single_arg = arguments[next(iter(arguments))]
+            return await async_tool.acall(single_arg)
+        except Exception:
+            # some tools will REQUIRE kwargs, so try it
             return await async_tool.acall(**arguments)
-    except Exception as e:
-        return ToolOutput(
-            content="Encountered error: " + str(e),
-            tool_name=tool.metadata.get_name(),
-            raw_input=arguments,
-            raw_output=str(e),
-            is_error=True,
-            exception=e,
-        )
+    else:
+        return await async_tool.acall(**arguments)
+    # except Exception as e:
+    #     return ToolOutput(
+    #         content="Encountered error: " + str(e),
+    #         tool_name=tool.metadata.name,
+    #         raw_input=arguments,
+    #         raw_output=str(e),
+    #         is_error=True,
+    #     )
 
 
 def call_tool_with_selection(

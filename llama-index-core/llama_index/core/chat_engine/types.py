@@ -14,6 +14,7 @@ from llama_index.core.base.llms.types import (
     ChatMessage,
     ChatResponseAsyncGen,
     ChatResponseGen,
+    LogProb,
 )
 from llama_index.core.base.response.schema import Response, StreamingResponse
 from llama_index.core.memory import BaseMemory
@@ -279,7 +280,6 @@ class StreamingAgentChatResponse:
 
     @property
     def response_gen(self) -> Generator[str, None, None]:
-        yielded_once = False
         if self.is_writing_to_memory:
             while not self.is_done or not self.queue.empty():
                 if self.exception is not None:
@@ -289,7 +289,6 @@ class StreamingAgentChatResponse:
                     delta = self.queue.get(block=False)
                     self.unformatted_response += delta
                     yield delta
-                    yielded_once = True
                 except Empty:
                     # Queue is empty, but we're not done yet. Sleep for 0 secs to release the GIL and allow other threads to run.
                     time.sleep(0)
@@ -300,17 +299,10 @@ class StreamingAgentChatResponse:
             for chat_response in self.chat_stream:
                 self.unformatted_response += chat_response.delta or ""
                 yield chat_response.delta or ""
-                yielded_once = True
-
         self.response = self.unformatted_response.strip()
-
-        # edge case where the stream was exhausted before yielding anything
-        if not yielded_once:
-            yield self.response
 
     async def async_response_gen(self) -> AsyncGenerator[str, None]:
         try:
-            yielded_once = False
             self._ensure_async_setup()
             assert self.aqueue is not None
 
@@ -325,14 +317,12 @@ class StreamingAgentChatResponse:
                                 self.aqueue.get(), timeout=0.1
                             )
                         except asyncio.TimeoutError:
-                            # Break only when the stream is done and the queue is empty
-                            if self.is_done and self.aqueue.empty():
+                            if self.is_done:
                                 break
                             continue
                         if delta is not None:
                             self.unformatted_response += delta
                             yield delta
-                            yielded_once = True
                     else:
                         break
             else:
@@ -342,12 +332,7 @@ class StreamingAgentChatResponse:
                 async for chat_response in self.achat_stream:
                     self.unformatted_response += chat_response.delta or ""
                     yield chat_response.delta or ""
-                    yielded_once = True
             self.response = self.unformatted_response.strip()
-
-            # edge case where the stream was exhausted before yielding anything
-            if not yielded_once:
-                yield self.response
         finally:
             if self.awrite_response_to_history_task:
                 # Make sure that the background task ran to completion, retrieve any exceptions
@@ -464,8 +449,6 @@ class ChatMode(str, Enum):
     """Corresponds to `ReActAgent`.
 
     Use a ReAct agent loop with query engine tools.
-
-    NOTE: Deprecated and unsupported.
     """
 
     OPENAI = "openai"
@@ -473,11 +456,12 @@ class ChatMode(str, Enum):
 
     Use an OpenAI function calling agent loop.
 
-    NOTE: Deprecated and unsupported.
+    NOTE: only works with OpenAI models that support function calling API.
     """
 
     BEST = "best"
     """Select the best chat engine based on the current LLM.
 
-    Corresponds to `condense_plus_context`
+    Corresponds to `OpenAIAgent` if using an OpenAI model that supports
+    function calling API, otherwise, corresponds to `ReActAgent`.
     """

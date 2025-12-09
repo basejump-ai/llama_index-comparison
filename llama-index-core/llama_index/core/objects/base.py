@@ -1,10 +1,20 @@
 """Base object types."""
 
+import logging
 import pickle
 import warnings
-from typing import Any, Callable, Generic, List, Optional, Sequence, Type, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, Type, TypeVar
 
 from llama_index.core.base.base_retriever import BaseRetriever
+from llama_index.core.base.query_pipeline.query import (
+    ChainableMixin,
+    InputKeys,
+    OutputKeys,
+    QueryComponent,
+    validate_and_convert_stringable,
+)
+from llama_index.core.bridge.pydantic import Field, ConfigDict
+from llama_index.core.callbacks.base import CallbackManager
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.indices.vector_store.base import VectorStoreIndex
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
@@ -22,7 +32,7 @@ from llama_index.core.storage.storage_context import (
 OT = TypeVar("OT")
 
 
-class ObjectRetriever(Generic[OT]):
+class ObjectRetriever(ChainableMixin, Generic[OT]):
     """Object retriever."""
 
     def __init__(
@@ -64,19 +74,64 @@ class ObjectRetriever(Generic[OT]):
 
         return [self._object_node_mapping.from_node(node.node) for node in nodes]
 
-    async def aretrieve(self, str_or_query_bundle: QueryType) -> List[OT]:
+    async def aretrieve(self, str_or_query_bundle: QueryType, relevance_threshold: Optional[float] = None) -> List[OT]:
         if isinstance(str_or_query_bundle, str):
             query_bundle = QueryBundle(query_str=str_or_query_bundle)
         else:
             query_bundle = str_or_query_bundle
-
         nodes = await self._retriever.aretrieve(query_bundle)
         for node_postprocessor in self._node_postprocessors:
             nodes = node_postprocessor.postprocess_nodes(
                 nodes, query_bundle=query_bundle
             )
+        retrieved_nodes = []
+        for node in nodes:
+            table_nm = node.node.metadata.get("name")
+            if relevance_threshold:
+                if node.score > relevance_threshold:
+                    retrieved_nodes.append(self._object_node_mapping.from_node(node.node))
+        return retrieved_nodes
 
-        return [self._object_node_mapping.from_node(node.node) for node in nodes]
+    def _as_query_component(self, **kwargs: Any) -> QueryComponent:
+        """As query component."""
+        return ObjectRetrieverComponent(retriever=self)
+
+
+class ObjectRetrieverComponent(QueryComponent):
+    """Object retriever component."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    retriever: ObjectRetriever = Field(..., description="Retriever.")
+
+    def set_callback_manager(self, callback_manager: CallbackManager) -> None:
+        """Set callback manager."""
+        self.retriever.retriever.callback_manager = callback_manager
+
+    def _validate_component_inputs(self, input: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate component inputs during run_component."""
+        # make sure input is a string
+        input["input"] = validate_and_convert_stringable(input["input"])
+        return input
+
+    def _run_component(self, **kwargs: Any) -> Any:
+        """Run component."""
+        output = self.retriever.retrieve(kwargs["input"])
+        return {"output": output}
+
+    async def _arun_component(self, **kwargs: Any) -> Any:
+        """Run component (async)."""
+        output = await self.retriever.aretrieve(kwargs["input"])
+        return {"output": output}
+
+    @property
+    def input_keys(self) -> InputKeys:
+        """Input keys."""
+        return InputKeys.from_keys({"input"})
+
+    @property
+    def output_keys(self) -> OutputKeys:
+        """Output keys."""
+        return OutputKeys.from_keys({"output"})
 
 
 class ObjectIndex(Generic[OT]):
@@ -172,7 +227,7 @@ class ObjectIndex(Generic[OT]):
             self._object_node_mapping.persist(
                 persist_dir=persist_dir, obj_node_mapping_fname=obj_node_mapping_fname
             )
-        except (NotImplementedError, pickle.PickleError) as err:
+        except (NotImplementedError, pickle.PickleError):
             warnings.warn(
                 (
                     "Unable to persist ObjectNodeMapping. You will need to "

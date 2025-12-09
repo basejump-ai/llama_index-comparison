@@ -200,7 +200,7 @@ class BaseLlamaDataset(BaseModel, Generic[P]):
         NOTE: Subclasses need to implement this.
 
         Args:
-            predictor (PredictorType): The predictor to make the prediction with.
+            predictor (PredictorType): The predictor to make the prediciton with.
             example (BaseLlamaDataExample): The example to predict on.
 
         Returns:
@@ -263,7 +263,7 @@ class BaseLlamaDataset(BaseModel, Generic[P]):
         NOTE: Subclasses need to implement this.
 
         Args:
-            predictor (PredictorType): The predictor to make the prediction with.
+            predictor (PredictorType): The predictor to make the prediciton with.
             example (BaseLlamaDataExample): The example to predict on.
 
         Returns:

@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import (
     JSON,
     Column,
-    BigInteger,
     Integer,
     MetaData,
     String,
@@ -13,14 +12,14 @@ from sqlalchemy import (
     select,
     insert,
     update,
-    text,
 )
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     create_async_engine,
+    async_sessionmaker,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base
 
 from llama_index.core.async_utils import asyncio_run
 from llama_index.core.bridge.pydantic import Field, PrivateAttr, model_serializer
@@ -50,13 +49,9 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
         default=DEFAULT_ASYNC_DATABASE_URI,
         description="SQLAlchemy async connection URI",
     )
-    db_schema: Optional[str] = Field(
-        default=None,
-        description="Database schema name (for PostgreSQL and other databases that support schemas)",
-    )
 
     _async_engine: Optional[AsyncEngine] = PrivateAttr(default=None)
-    _async_session_factory: Optional[sessionmaker] = PrivateAttr(default=None)
+    _async_session_factory: Optional[async_sessionmaker] = PrivateAttr(default=None)
     _metadata: MetaData = PrivateAttr(default_factory=MetaData)
     _table: Optional[Table] = PrivateAttr(default=None)
     _db_data: Optional[List[Dict[str, Any]]] = PrivateAttr(default=None)
@@ -67,13 +62,11 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
         async_database_uri: Optional[str] = DEFAULT_ASYNC_DATABASE_URI,
         async_engine: Optional[AsyncEngine] = None,
         db_data: Optional[List[Dict[str, Any]]] = None,
-        db_schema: Optional[str] = None,
     ):
         """Initialize the SQLAlchemy chat store."""
         super().__init__(
             table_name=table_name,
             async_database_uri=async_database_uri or DEFAULT_ASYNC_DATABASE_URI,
-            db_schema=db_schema,
         )
         self._async_engine = async_engine
         self._db_data = db_data
@@ -84,11 +77,7 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
         # Handles both :memory: and empty path which also means in-memory for sqlite
         return uri == "sqlite+aiosqlite:///:memory:" or uri == "sqlite+aiosqlite://"
 
-    def _is_sqlite_database(self) -> bool:
-        """Check if the database is SQLite (which doesn't support schemas)."""
-        return self.async_database_uri.startswith("sqlite")
-
-    async def _initialize(self) -> Tuple[sessionmaker, Table]:
+    async def _initialize(self) -> Tuple[async_sessionmaker[AsyncSession], Table]:
         """Initialize the chat store. Used to avoid HTTP connections in constructor."""
         if self._async_session_factory is not None and self._table is not None:
             return self._async_session_factory, self._table
@@ -109,7 +98,7 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
 
     async def _setup_connections(
         self,
-    ) -> Tuple[AsyncEngine, sessionmaker]:
+    ) -> Tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
         """Set up database connections and session factories."""
         # Create async engine and session factory if async URI is provided
         if self._async_session_factory is not None and self._async_engine is not None:
@@ -121,11 +110,11 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
             if self.async_database_uri is None:
                 self.async_database_uri = self._async_engine.url
 
-            self._async_session_factory = sessionmaker(  # type: ignore
-                bind=self._async_engine, expire_on_commit=False, class_=AsyncSession
+            self._async_session_factory = async_sessionmaker(
+                bind=self._async_engine, class_=AsyncSession
             )
 
-            return self._async_engine, self._async_session_factory  # type: ignore
+            return self._async_engine, self._async_session_factory
         else:
             raise ValueError(
                 "No async database URI or engine provided, cannot initialize DB sessionmaker"
@@ -133,24 +122,13 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
 
     async def _setup_tables(self, async_engine: AsyncEngine) -> Table:
         """Set up database tables."""
-        # Create metadata with schema
-        if self.db_schema is not None and not self._is_sqlite_database():
-            # Only set schema for databases that support it
-            self._metadata = MetaData(schema=self.db_schema)
-
-            # Create schema if it doesn't exist (PostgreSQL, SQL Server, etc.)
-            async with async_engine.begin() as conn:
-                await conn.execute(
-                    text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"')
-                )
-
         # Create messages table with status column
         self._table = Table(
             f"{self.table_name}",
             self._metadata,
             Column("id", Integer, primary_key=True, autoincrement=True),
             Column("key", String, nullable=False, index=True),
-            Column("timestamp", BigInteger, nullable=False, index=True),
+            Column("timestamp", Integer, nullable=False, index=True),
             Column("role", String, nullable=False),
             Column(
                 "status",
@@ -232,7 +210,7 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
             await session.execute(
                 insert(table).values(
                     key=key,
-                    timestamp=time.time_ns(),
+                    timestamp=int(time.time()),
                     role=message.role,
                     status=status.value,
                     data=message.model_dump(mode="json"),
@@ -255,12 +233,12 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
                     [
                         {
                             "key": key,
-                            "timestamp": time.time_ns() + i,
+                            "timestamp": int(time.time()),
                             "role": message.role,
                             "status": status.value,
                             "data": message.model_dump(mode="json"),
                         }
-                        for i, message in enumerate(messages)
+                        for message in messages
                     ]
                 )
             )
@@ -279,7 +257,7 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
         await self.delete_messages(key)
 
         # Then add new messages
-        current_time = time.time_ns()
+        current_time = int(time.time())
 
         async with session_factory() as session:
             for i, message in enumerate(messages):
@@ -441,7 +419,6 @@ class SQLAlchemyChatStore(AsyncDBChatStore):
         dump_data = {
             "table_name": self.table_name,
             "async_database_uri": self.async_database_uri,
-            "db_schema": self.db_schema,
         }
 
         if self._is_in_memory_uri(self.async_database_uri):

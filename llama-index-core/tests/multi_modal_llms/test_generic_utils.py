@@ -2,8 +2,6 @@
 
 import pytest
 import base64
-import httpx
-from pathlib import Path
 from unittest.mock import mock_open, patch, MagicMock
 
 from llama_index.core.schema import ImageDocument
@@ -18,9 +16,7 @@ from llama_index.core.multi_modal_llms.generic_utils import (
 )
 
 # Expected values
-EXP_IMAGE_URLS = [
-    "https://astrabert.github.io/hophop-science/images/whale_doing_science.png"
-]
+EXP_IMAGE_URLS = ["http://example.com/image1.jpg"]
 EXP_BASE64 = "SGVsbG8gV29ybGQ="  # "Hello World" in base64
 EXP_BINARY = b"Hello World"
 
@@ -55,26 +51,22 @@ def test_encode_image():
     assert result == EXP_BASE64
 
 
-def test_image_documents_to_base64_multiple_sources(tmp_path: Path):
+def test_image_documents_to_base64_multiple_sources():
     """Test converting multiple ImageDocuments with different source types."""
-    content = httpx.get(EXP_IMAGE_URLS[0]).content
-    expected_b64 = base64.b64encode(content).decode("utf-8")
-    fl_path = tmp_path / "test_image.png"
-    fl_path.write_bytes(content)
     documents = [
-        ImageDocument(image=expected_b64),
-        ImageDocument(image_path=fl_path),
+        ImageDocument(image=EXP_BASE64),
+        ImageDocument(image_path="test.jpg"),
         ImageDocument(metadata={"file_path": "test.jpg"}),
         ImageDocument(image_url=EXP_IMAGE_URLS[0]),
     ]
     with patch("requests.get") as mock_get:
-        mock_get.return_value.content = content
+        mock_get.return_value.content = EXP_BINARY
         with patch("os.path.isfile", return_value=True):
-            with patch("builtins.open", mock_open(read_data=content)):
+            with patch("builtins.open", mock_open(read_data=EXP_BINARY)):
                 result = image_documents_to_base64(documents)
 
     assert len(result) == 4
-    assert all(encoding == expected_b64 for encoding in result)
+    assert all(encoding == EXP_BASE64 for encoding in result)
 
 
 def test_image_documents_to_base64_failed_url():
@@ -144,15 +136,11 @@ def test_infer_image_mimetype_from_file_path():
     assert infer_image_mimetype_from_file_path("") == "image/jpeg"
 
 
-def test_set_base64_and_mimetype_for_image_docs(tmp_path: Path):
+def test_set_base64_and_mimetype_for_image_docs():
     """Test setting base64 and mimetype fields for ImageDocument objects."""
-    content = httpx.get(EXP_IMAGE_URLS[0]).content
-    expected_b64 = base64.b64encode(content).decode("utf-8")
-    fl_path = tmp_path / "test_image.png"
-    fl_path.write_bytes(content)
     image_docs = [
-        ImageDocument(image=expected_b64),
-        ImageDocument(image_path=fl_path.__str__()),
+        ImageDocument(image=EXP_BASE64),
+        ImageDocument(image_path="test.asdf"),
     ]
 
     with patch("requests.get") as mock_get:
@@ -163,6 +151,6 @@ def test_set_base64_and_mimetype_for_image_docs(tmp_path: Path):
                 results = set_base64_and_mimetype_for_image_docs(image_docs)
 
     assert len(results) == 2
-    assert results[0].image == expected_b64
+    assert results[0].image == EXP_BASE64
     assert results[0].image_mimetype == "image/jpeg"
     assert results[1].image_mimetype == "image/jpeg"

@@ -124,9 +124,8 @@ class SimpleGraphStore(GraphStore):
         """Add triplet."""
         if subj not in self._data.graph_dict:
             self._data.graph_dict[subj] = []
-        existing = self._data.graph_dict[subj]
-        if (rel, obj) not in map(tuple, existing):
-            existing.append([rel, obj])
+        if (rel, obj) not in self._data.graph_dict[subj]:
+            self._data.graph_dict[subj].append([rel, obj])
 
     def delete(self, subj: str, rel: str, obj: str) -> None:
         """Delete triplet."""

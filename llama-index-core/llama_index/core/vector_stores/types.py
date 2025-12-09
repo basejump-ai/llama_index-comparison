@@ -95,7 +95,7 @@ class MetadataFilter(BaseModel):
     r"""
     Comprehensive metadata filter for vector stores to support more operators.
 
-    Value uses Strict types, as int, float and str are compatible types and were all
+    Value uses Strict* types, as int, float and str are compatible types and were all
     converted to string before.
 
     See: https://docs.pydantic.dev/latest/usage/types/#strict-types
@@ -184,19 +184,20 @@ class MetadataFilters(BaseModel):
             condition=condition,
         )
 
-    def legacy_filters(self) -> List[ExactMatchFilter]:
+    def legacy_filters(self) -> List[MetadataFilter]:
         """Convert MetadataFilters to legacy ExactMatchFilters."""
         filters = []
         for filter in self.filters:
-            if (
-                isinstance(filter, MetadataFilters)
-                or filter.operator != FilterOperator.EQ
-            ):
+            if filter.operator not in (FilterOperator.EQ, FilterOperator.IN) or isinstance(filter, MetadataFilters):
                 raise ValueError(
-                    "Vector Store only supports exact match filters. "
+                    "Vector Store only supports exact match or in filters. "
                     "Please use ExactMatchFilter or FilterOperator.EQ instead."
                 )
-            filters.append(ExactMatchFilter(key=filter.key, value=filter.value))
+            filters.append(
+                MetadataFilter(
+                    key=filter.key, value=filter.value, operator=filter.operator
+                )
+            )
         return filters
 
 
@@ -421,6 +422,7 @@ class BasePydanticVectorStore(BaseComponent, ABC):
     @abstractmethod
     def query(self, query: VectorStoreQuery, **kwargs: Any) -> VectorStoreQueryResult:
         """Query vector store."""
+        pass
 
     async def aquery(
         self, query: VectorStoreQuery, **kwargs: Any

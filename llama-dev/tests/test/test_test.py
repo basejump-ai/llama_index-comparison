@@ -28,22 +28,12 @@ def mocked_install_failed(*args, **kwargs):
     }
 
 
-def mocked_skip_failed_unsupported_python_version(*args, **kwargs):
+def mocked_skip_failed(*args, **kwargs):
     return {
         "package": Path(__file__).parent.parent / "data" / "test_integration",
-        "status": ResultStatus.UNSUPPORTED_PYTHON_VERSION,
+        "status": ResultStatus.SKIPPED,
         "stdout": "",
-        "stderr": "Not compatible with Python",
-        "time": "0.1s",
-    }
-
-
-def mocked_skip_failed_no_tests(*args, **kwargs):
-    return {
-        "package": Path(__file__).parent.parent / "data" / "test_integration",
-        "status": ResultStatus.NO_TESTS,
-        "stdout": "",
-        "stderr": "package has no tests",
+        "stderr": "Integration skipped",
         "time": "0.1s",
     }
 
@@ -206,7 +196,7 @@ def test_install_failures(
 @mock.patch("llama_dev.test.get_changed_files")
 @mock.patch("llama_dev.test.get_changed_packages")
 @mock.patch("llama_dev.test.get_dependants_packages")
-def test_skip_failures_no_tests(
+def test_skip_failures(
     mock_get_dependants,
     mock_get_changed_packages,
     mock_get_changed_files,
@@ -219,7 +209,7 @@ def test_skip_failures_no_tests(
     mock_get_changed_packages.return_value = {Path("/fake/repo/package1")}
     mock_get_dependants.return_value = set()
 
-    monkeypatch.setattr(llama_dev_test, "_run_tests", mocked_skip_failed_no_tests)
+    monkeypatch.setattr(llama_dev_test, "_run_tests", mocked_skip_failed)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -229,42 +219,8 @@ def test_skip_failures_no_tests(
 
     # Check console output
     assert result.exit_code == 0
-    assert "⏭️ test_integration skipped due to no tests" in result.stdout
-
-
-@mock.patch("llama_dev.test.find_all_packages")
-@mock.patch("llama_dev.test.get_changed_files")
-@mock.patch("llama_dev.test.get_changed_packages")
-@mock.patch("llama_dev.test.get_dependants_packages")
-def test_skip_failures_unsupported_python(
-    mock_get_dependants,
-    mock_get_changed_packages,
-    mock_get_changed_files,
-    mock_find_all_packages,
-    monkeypatch,
-    data_path,
-):
-    mock_find_all_packages.return_value = {Path("/fake/repo/package1")}
-    mock_get_changed_files.return_value = {Path("/fake/repo/package1/file.py")}
-    mock_get_changed_packages.return_value = {Path("/fake/repo/package1")}
-    mock_get_dependants.return_value = set()
-
-    monkeypatch.setattr(
-        llama_dev_test, "_run_tests", mocked_skip_failed_unsupported_python_version
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["--repo-root", data_path, "test", "--base-ref", "main"],
-    )
-
-    # Check console output
-    assert result.exit_code == 0
-    assert (
-        "⏭️ test_integration skipped due to python version incompatibility"
-        in result.stdout
-    )
+    assert "⏭️  test_integration skipped" in result.stdout
+    assert "Error:\nIntegration skipped" in result.stdout
 
 
 @mock.patch("llama_dev.test.find_all_packages")
@@ -347,7 +303,6 @@ def test__pytest(mock_subprocess):
     assert mock_subprocess.call_args[0][0] == [
         "uv",
         "run",
-        "--no-sync",
         "--",
         "pytest",
         "-q",
@@ -360,7 +315,6 @@ def test__pytest(mock_subprocess):
     assert mock_subprocess.call_args[0][0] == [
         "uv",
         "run",
-        "--no-sync",
         "--",
         "pytest",
         "-q",
@@ -378,29 +332,11 @@ def test_incompatible_python_version(changed_packages):
             return_value={"project": {"requires-python": ">=3.10"}},
         ),
         mock.patch("llama_dev.test.is_python_version_compatible", return_value=False),
-        mock.patch("llama_dev.test.package_has_tests", return_value=True),
     ):
         result = _run_tests(Path(), changed_packages, "main", False, 0)
 
-        assert result["status"] == ResultStatus.UNSUPPORTED_PYTHON_VERSION
+        assert result["status"] == ResultStatus.SKIPPED
         assert "Not compatible with Python" in result["stderr"]
-        assert "package has no tests" not in result["stderr"]
-
-
-def test_no_package_tests(changed_packages):
-    with (
-        mock.patch(
-            "llama_dev.test.load_pyproject",
-            return_value={"project": {"requires-python": ">=3.8"}},
-        ),
-        mock.patch("llama_dev.test.is_python_version_compatible", return_value=True),
-        mock.patch("llama_dev.test.package_has_tests", return_value=False),
-    ):
-        result = _run_tests(Path(), changed_packages, "main", False, 0)
-
-        assert result["status"] == ResultStatus.NO_TESTS
-        assert "package has no tests" in result["stderr"]
-        assert "Not compatible with Python" not in result["stderr"]
 
 
 def test_install_dependencies_failure(changed_packages, package_data):
@@ -544,39 +480,3 @@ def test_successful_run_with_coverage(package_data, changed_packages):
         assert result["status"] == ResultStatus.TESTS_PASSED
         assert result["stdout"] == "coverage ok"
         assert "time" in result
-
-
-def test__trim():
-    from llama_dev.test import MAX_CONSOLE_PRINT_LINES, _trim
-
-    # Test with a short message (less than MAX_CONSOLE_PRINT_LINES)
-    short_msg = "Line 1\nLine 2\nLine 3"
-    assert _trim(False, short_msg) == short_msg
-    assert _trim(True, short_msg) == short_msg
-
-    # Test with a long message (more than MAX_CONSOLE_PRINT_LINES)
-    long_msg = "\n".join([f"Line {i}" for i in range(1, MAX_CONSOLE_PRINT_LINES + 10)])
-
-    # In non-debug mode, the message should be truncated
-    trimmed = _trim(False, long_msg)
-    trimmed_lines = trimmed.split("\n")
-
-    # Should have MAX_CONSOLE_PRINT_LINES lines plus the additional "truncated" message line
-    assert len(trimmed_lines) == MAX_CONSOLE_PRINT_LINES + 1
-
-    # The first MAX_CONSOLE_PRINT_LINES lines should be from the original message
-    for i in range(MAX_CONSOLE_PRINT_LINES):
-        assert trimmed_lines[i] == f"Line {i + 1}"
-
-    # The last line should be the truncation message
-    assert (
-        "<-- llama-dev: output truncated, pass '--debug' to see the full log -->"
-        in trimmed_lines[-1]
-    )
-
-    # In debug mode, the message should not be truncated
-    debug_trimmed = _trim(True, long_msg)
-    assert debug_trimmed == long_msg
-    assert (
-        len(debug_trimmed.split("\n")) == MAX_CONSOLE_PRINT_LINES + 9
-    )  # Original number of lines

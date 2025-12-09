@@ -9,7 +9,7 @@ from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.callbacks.base import CallbackManager
 from llama_index.core.chat_engine.types import BaseChatEngine, ChatMode
 from llama_index.core.data_structs.data_structs import IndexStruct
-from llama_index.core.ingestion import run_transformations, arun_transformations
+from llama_index.core.ingestion import run_transformations
 from llama_index.core.llms.utils import LLMType, resolve_llm
 from llama_index.core.schema import BaseNode, Document, IndexNode, TransformComponent
 from llama_index.core.settings import Settings
@@ -99,7 +99,7 @@ class BaseIndex(Generic[IS], ABC):
         Create index from documents.
 
         Args:
-            documents (Sequence[Document]]): List of documents to
+            documents (Optional[Sequence[BaseDocument]]): List of documents to
                 build the index from.
 
         """
@@ -110,8 +110,7 @@ class BaseIndex(Generic[IS], ABC):
 
         with callback_manager.as_trace("index_construction"):
             for doc in documents:
-                docstore.set_document_hash(doc.id_, doc.hash)
-
+                docstore.set_document_hash(doc.get_doc_id(), doc.hash)
             nodes = run_transformations(
                 documents,  # type: ignore
                 transformations,
@@ -207,25 +206,6 @@ class BaseIndex(Generic[IS], ABC):
             self._insert(nodes, **insert_kwargs)
             self._storage_context.index_store.add_index_struct(self._index_struct)
 
-    async def ainsert_nodes(
-        self, nodes: Sequence[BaseNode], **insert_kwargs: Any
-    ) -> None:
-        """Asynchronously insert nodes."""
-        for node in nodes:
-            if isinstance(node, IndexNode):
-                try:
-                    node.dict()
-                except ValueError:
-                    self._object_map[node.index_id] = node.obj
-                    node.obj = None
-
-        with self._callback_manager.as_trace("ainsert_nodes"):
-            await self.docstore.async_add_documents(nodes, allow_update=True)
-            self._insert(nodes=nodes)
-            await self._storage_context.index_store.async_add_index_struct(
-                self._index_struct
-            )
-
     def insert(self, document: Document, **insert_kwargs: Any) -> None:
         """Insert a document."""
         with self._callback_manager.as_trace("insert"):
@@ -237,20 +217,7 @@ class BaseIndex(Generic[IS], ABC):
             )
 
             self.insert_nodes(nodes, **insert_kwargs)
-            self.docstore.set_document_hash(document.id_, document.hash)
-
-    async def ainsert(self, document: Document, **insert_kwargs: Any) -> None:
-        """Asynchronously insert a document."""
-        with self._callback_manager.as_trace("ainsert"):
-            nodes = await arun_transformations(
-                [document],
-                self._transformations,
-                show_progress=self._show_progress,
-                **insert_kwargs,
-            )
-
-            await self.ainsert_nodes(nodes, **insert_kwargs)
-            await self.docstore.aset_document_hash(document.id_, document.hash)
+            self.docstore.set_document_hash(document.get_doc_id(), document.hash)
 
     @abstractmethod
     def _delete_node(self, node_id: str, **delete_kwargs: Any) -> None:
@@ -276,28 +243,6 @@ class BaseIndex(Generic[IS], ABC):
 
         self._storage_context.index_store.add_index_struct(self._index_struct)
 
-    async def adelete_nodes(
-        self,
-        node_ids: List[str],
-        delete_from_docstore: bool = False,
-        **delete_kwargs: Any,
-    ) -> None:
-        """
-        Asynchronously delete a list of nodes from the index.
-
-        Args:
-            doc_ids (List[str]): A list of doc_ids from the nodes to delete
-
-        """
-        for node_id in node_ids:
-            self._delete_node(node_id, **delete_kwargs)
-            if delete_from_docstore:
-                await self.docstore.adelete_document(node_id, raise_error=False)
-
-        await self._storage_context.index_store.async_add_index_struct(
-            self._index_struct
-        )
-
     def delete(self, doc_id: str, **delete_kwargs: Any) -> None:
         """
         Delete a document from the index.
@@ -310,7 +255,6 @@ class BaseIndex(Generic[IS], ABC):
         logger.warning(
             "delete() is now deprecated, please refer to delete_ref_doc() to delete "
             "ingested documents+nodes or delete_nodes to delete a list of nodes."
-            "Use adelete_ref_docs() for an asynchronous implementation"
         )
         self.delete_ref_doc(doc_id)
 
@@ -332,24 +276,6 @@ class BaseIndex(Generic[IS], ABC):
         if delete_from_docstore:
             self.docstore.delete_ref_doc(ref_doc_id, raise_error=False)
 
-    async def adelete_ref_doc(
-        self, ref_doc_id: str, delete_from_docstore: bool = False, **delete_kwargs: Any
-    ) -> None:
-        """Delete a document and it's nodes by using ref_doc_id."""
-        ref_doc_info = await self.docstore.aget_ref_doc_info(ref_doc_id)
-        if ref_doc_info is None:
-            logger.warning(f"ref_doc_id {ref_doc_id} not found, nothing deleted.")
-            return
-
-        await self.adelete_nodes(
-            ref_doc_info.node_ids,
-            delete_from_docstore=False,
-            **delete_kwargs,
-        )
-
-        if delete_from_docstore:
-            await self.docstore.adelete_ref_doc(ref_doc_id, raise_error=False)
-
     def update(self, document: Document, **update_kwargs: Any) -> None:
         """
         Update a document and it's corresponding nodes.
@@ -365,7 +291,6 @@ class BaseIndex(Generic[IS], ABC):
         logger.warning(
             "update() is now deprecated, please refer to update_ref_doc() to update "
             "ingested documents+nodes."
-            "Use aupdate_ref_docs() for an asynchronous implementation"
         )
         self.update_ref_doc(document, **update_kwargs)
 
@@ -381,33 +306,13 @@ class BaseIndex(Generic[IS], ABC):
             delete_kwargs (Dict): kwargs to pass to delete
 
         """
-        with self._callback_manager.as_trace("update_ref_doc"):
+        with self._callback_manager.as_trace("update"):
             self.delete_ref_doc(
-                document.id_,
+                document.get_doc_id(),
                 delete_from_docstore=True,
                 **update_kwargs.pop("delete_kwargs", {}),
             )
             self.insert(document, **update_kwargs.pop("insert_kwargs", {}))
-
-    async def aupdate_ref_doc(self, document: Document, **update_kwargs: Any) -> None:
-        """
-        Asynchronously update a document and it's corresponding nodes.
-
-        This is equivalent to deleting the document and then inserting it again.
-
-        Args:
-            document (Union[BaseDocument, BaseIndex]): document to update
-            insert_kwargs (Dict): kwargs to pass to insert
-            delete_kwargs (Dict): kwargs to pass to delete
-
-        """
-        with self._callback_manager.as_trace("aupdate_ref_doc"):
-            await self.adelete_ref_doc(
-                document.id_,
-                delete_from_docstore=True,
-                **update_kwargs.pop("delete_kwargs", {}),
-            )
-            await self.ainsert(document, **update_kwargs.pop("insert_kwargs", {}))
 
     def refresh(
         self, documents: Sequence[Document], **update_kwargs: Any
@@ -422,7 +327,6 @@ class BaseIndex(Generic[IS], ABC):
         logger.warning(
             "refresh() is now deprecated, please refer to refresh_ref_docs() to "
             "refresh ingested documents+nodes with an updated list of documents."
-            "Use arefresh_ref_docs() for an asynchronous implementation"
         )
         return self.refresh_ref_docs(documents, **update_kwargs)
 
@@ -436,10 +340,12 @@ class BaseIndex(Generic[IS], ABC):
         updating documents that have any changes in text or metadata. It
         will also insert any documents that previously were not stored.
         """
-        with self._callback_manager.as_trace("refresh_ref_docs"):
+        with self._callback_manager.as_trace("refresh"):
             refreshed_documents = [False] * len(documents)
             for i, document in enumerate(documents):
-                existing_doc_hash = self._docstore.get_document_hash(document.id_)
+                existing_doc_hash = self._docstore.get_document_hash(
+                    document.get_doc_id()
+                )
                 if existing_doc_hash is None:
                     self.insert(document, **update_kwargs.pop("insert_kwargs", {}))
                     refreshed_documents[i] = True
@@ -451,34 +357,6 @@ class BaseIndex(Generic[IS], ABC):
 
             return refreshed_documents
 
-    async def arefresh_ref_docs(
-        self, documents: Sequence[Document], **update_kwargs: Any
-    ) -> List[bool]:
-        """
-        Asynchronously refresh an index with documents that have changed.
-
-        This allows users to save LLM and Embedding model calls, while only
-        updating documents that have any changes in text or metadata. It
-        will also insert any documents that previously were not stored.
-        """
-        with self._callback_manager.as_trace("arefresh_ref_docs"):
-            refreshed_documents = [False] * len(documents)
-            for i, document in enumerate(documents):
-                existing_doc_hash = await self._docstore.aget_document_hash(
-                    document.id_
-                )
-                if existing_doc_hash is None:
-                    await self.ainsert(
-                        document, **update_kwargs.pop("insert_kwargs", {})
-                    )
-                    refreshed_documents[i] = True
-                elif existing_doc_hash != document.hash:
-                    await self.aupdate_ref_doc(
-                        document, **update_kwargs.pop("update_kwargs", {})
-                    )
-                    refreshed_documents[i] = True
-            return refreshed_documents
-
     @property
     @abstractmethod
     def ref_doc_info(self) -> Dict[str, RefDocInfo]:
@@ -486,7 +364,8 @@ class BaseIndex(Generic[IS], ABC):
         ...
 
     @abstractmethod
-    def as_retriever(self, **kwargs: Any) -> BaseRetriever: ...
+    def as_retriever(self, **kwargs: Any) -> BaseRetriever:
+        ...
 
     def as_query_engine(
         self, llm: Optional[LLMType] = None, **kwargs: Any
@@ -545,11 +424,19 @@ class BaseIndex(Generic[IS], ABC):
         query_engine = self.as_query_engine(llm=llm, **kwargs)
 
         # resolve chat mode
-        if chat_mode in [ChatMode.REACT, ChatMode.OPENAI]:
-            raise ValueError(
-                "ChatMode.REACT and ChatMode.OPENAI are now deprecated and removed. "
-                "Please use the ReActAgent or FunctionAgent classes from llama_index.core.agent.workflow "
-                "to create an agent with a query engine tool."
+        if chat_mode in [ChatMode.REACT, ChatMode.OPENAI, ChatMode.BEST]:
+            # use an agent with query engine tool in these chat modes
+            # NOTE: lazy import
+            from llama_index.core.agent import AgentRunner
+            from llama_index.core.tools.query_engine import QueryEngineTool
+
+            # convert query engine to tool
+            query_engine_tool = QueryEngineTool.from_defaults(query_engine=query_engine)
+
+            return AgentRunner.from_llm(
+                tools=[query_engine_tool],
+                llm=llm,
+                **kwargs,
             )
 
         if chat_mode == ChatMode.CONDENSE_QUESTION:
@@ -561,7 +448,6 @@ class BaseIndex(Generic[IS], ABC):
                 llm=llm,
                 **kwargs,
             )
-
         elif chat_mode == ChatMode.CONTEXT:
             from llama_index.core.chat_engine import ContextChatEngine
 
@@ -571,7 +457,7 @@ class BaseIndex(Generic[IS], ABC):
                 **kwargs,
             )
 
-        elif chat_mode in [ChatMode.CONDENSE_PLUS_CONTEXT, ChatMode.BEST]:
+        elif chat_mode == ChatMode.CONDENSE_PLUS_CONTEXT:
             from llama_index.core.chat_engine import CondensePlusContextChatEngine
 
             return CondensePlusContextChatEngine.from_defaults(

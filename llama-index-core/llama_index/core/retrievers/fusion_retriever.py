@@ -87,8 +87,8 @@ class QueryFusionRetriever(BaseRetriever):
         )
         response = self._llm.complete(prompt_str)
 
-        # Strip code block and assume LLM properly put each query on a newline
-        queries = response.text.strip("`").split("\n")
+        # assume LLM proper put each query on a newline
+        queries = response.text.split("\n")
         queries = [q.strip() for q in queries if q.strip()]
         if self._verbose:
             queries_str = "\n".join(queries)

@@ -1,6 +1,5 @@
 import click
 
-from .bump import bump
 from .cmd_exec import cmd_exec
 from .info import info
 
@@ -12,4 +11,3 @@ def pkg():
 
 pkg.add_command(info)
 pkg.add_command(cmd_exec, name="exec")
-pkg.add_command(bump)

@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Any, Callable, Dict, List, Optional
 
@@ -17,11 +16,7 @@ DEFAULT_TOKEN_LIMIT = 3000
 
 
 class ChatMemoryBuffer(BaseChatStoreMemory):
-    """
-    Deprecated: Please use `llama_index.core.memory.Memory` instead.
-
-    Simple buffer for storing chat history.
-    """
+    """Simple buffer for storing chat history."""
 
     token_limit: int
     tokenizer_fn: Callable[[str], List] = Field(
@@ -50,6 +45,12 @@ class ChatMemoryBuffer(BaseChatStoreMemory):
         return values
 
     @classmethod
+    def get_llm_token_limit(cls, llm, token_limit: Optional[int] = None):
+        context_window = llm.metadata.context_window
+        token_limit = token_limit or int(context_window * DEFAULT_TOKEN_LIMIT_RATIO)
+        return token_limit
+
+    @classmethod
     def from_defaults(
         cls,
         chat_history: Optional[List[ChatMessage]] = None,
@@ -65,8 +66,7 @@ class ChatMemoryBuffer(BaseChatStoreMemory):
             raise ValueError(f"Unexpected kwargs: {kwargs}")
 
         if llm is not None:
-            context_window = llm.metadata.context_window
-            token_limit = token_limit or int(context_window * DEFAULT_TOKEN_LIMIT_RATIO)
+            token_limit = cls.get_llm_token_limit(llm=llm, token_limit=token_limit)
         elif token_limit is None:
             token_limit = DEFAULT_TOKEN_LIMIT
 
@@ -149,14 +149,6 @@ class ChatMemoryBuffer(BaseChatStoreMemory):
             return []
 
         return chat_history[-message_count:]
-
-    async def aget(
-        self, input: Optional[str] = None, initial_token_count: int = 0, **kwargs: Any
-    ) -> List[ChatMessage]:
-        """Get chat history."""
-        return await asyncio.to_thread(
-            self.get, input=input, initial_token_count=initial_token_count, **kwargs
-        )
 
     def _token_count_for_messages(self, messages: List[ChatMessage]) -> int:
         if len(messages) <= 0:
